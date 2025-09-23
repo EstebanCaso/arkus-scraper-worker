@@ -32,11 +32,19 @@ function runNodeScript(relPath, args = [], env = {}) {
 
 // POST /amadeus
 app.post('/amadeus', async (req, res) => {
-  const { latitude, longitude, radius = 30, keyword = null, saveToDb = false, userUuid = null } = req.body || {};
+  const { latitude, longitude, radius = 30, keyword = null, saveToDb = false, userUuid = null, typed = false } = req.body || {};
   if (typeof latitude !== 'number' || typeof longitude !== 'number') return res.status(400).json({ ok: false, error: 'latitude/longitude required' });
+
+  // Solo actualizar cuando el usuario escriba (typed === true)
+  if (typed !== true) {
+    return res.status(200).json({ ok: true, output: '[]', error: '', code: 0 });
+  }
+
   const args = [String(latitude), String(longitude), `--radius=${radius}`];
   if (keyword) args.push(`--keyword=${keyword}`);
-  if (saveToDb && userUuid) args.push(`--user-id=${userUuid}`, '--save');
+  // Solo guardar si viene explícitamente desde el usuario escribiendo
+  if (typed === true && saveToDb && userUuid) args.push(`--user-id=${userUuid}`, '--save');
+
   const { code, stdout, stderr } = await runNodeScript('scripts/amadeus_hotels.js', args);
   return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, output: stdout, error: stderr, code });
 });
