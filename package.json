@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node server/index.js",
     "start": "node server/index.js",
-    "health": "node -e \"import('node:http').then(({createServer})=>createServer((_,r)=>r.end('ok')).listen(8080))\""
+    "health": "node -e \"import('node:http').then(({createServer})=>createServer((_,r)=>r.end('ok')).listen(8080))\"",
+    "test": "node --test --test-reporter=spec"
   },
   "dependencies": {
   "express": "^4.19.2",

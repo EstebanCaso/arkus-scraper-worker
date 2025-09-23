@@ -2,6 +2,8 @@
 // dotenv/config not needed in Vercel - env vars are already available
 import { chromium } from 'playwright';
 import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
 import { randomUUID } from 'crypto';
 const uuidv4 = () => randomUUID();
 const uuidValidate = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value));
@@ -36,6 +38,18 @@ const USER_AGENTS = [
 
 function getRandomUA() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+// --- Stop flag helpers ---
+function getStopFile(userId) {
+  try {
+    return path.join(process.cwd(), 'server', 'tmp', `stop-${userId}.txt`);
+  } catch {
+    return path.join('server', 'tmp', `stop-${userId}.txt`);
+  }
+}
+function shouldStop(userId) {
+  try { return !!(userId && fs.existsSync(getStopFile(userId))); } catch { return false }
 }
 
 // --- Función para generar fechas de los próximos 90 días ---
@@ -511,6 +525,7 @@ async function scrapeMultipleDates(hotelName, userId, { days = 90, concurrency =
     const p = await browser.newPage({ userAgent: getRandomUA() })
     const rangeResults = []
     for (let offset = start; offset <= end; offset++) {
+      if (shouldStop(userId)) { break }
       const checkin = new Date(today.getTime() + offset*86400000)
       const checkout = new Date(checkin.getTime() + 86400000)
       const ci = checkin.toISOString().split('T')[0]
@@ -588,7 +603,9 @@ async function scrapeMultipleDates(hotelName, userId, { days = 90, concurrency =
   }
 
   // Ejecutar rangos (hasta 3) en paralelo
-  await Promise.all(dateRanges.map(([s,e]) => processRange(s,e)))
+  if (!shouldStop(userId)) {
+    await Promise.all(dateRanges.map(([s,e]) => processRange(s,e)))
+  }
   await browser.close()
   return results
 }
@@ -651,14 +668,29 @@ if (args.length >= 2) {
       if (days === 1) {
         // Modo de prueba: solo un día
         const prices = await scrapeBookingPrices(hotelName, { headless });
-        await insertUserHotelPrices(userId, hotelName, prices);
+        if (!Array.isArray(prices)) {
+          console.log(JSON.stringify([]));
+          return;
+        }
+        if (!shouldStop(userId)) {
+          await insertUserHotelPrices(userId, hotelName, prices);
+        }
+        console.log(JSON.stringify(prices));
       } else {
         // Modo completo: múltiples días con concurrencia
         const prices = await scrapeMultipleDates(hotelName, userId, { days, concurrency, headless });
-        await insertUserHotelPrices(userId, hotelName, prices);
+        if (!Array.isArray(prices)) {
+          console.log(JSON.stringify([]));
+          return;
+        }
+        if (!shouldStop(userId)) {
+          await insertUserHotelPrices(userId, hotelName, prices);
+        }
+        console.log(JSON.stringify(prices));
       }
     } catch (error) {
       console.error('❌ Error:', error.message);
+      try { console.log(JSON.stringify([])); } catch {}
     }
   })();
 } else {
