@@ -1,6 +1,5 @@
 // dotenv/config not needed in Vercel - env vars are already available
 import { chromium } from 'playwright'
-import fetch from 'node-fetch'
 import fs from 'fs'
 import path from 'path'
 
