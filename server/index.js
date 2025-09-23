@@ -6,6 +6,19 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// Simple in-memory cache for Amadeus base results by geo key
+// Key format: `${lat}:${lon}:${radius}`
+const amadeusCache = new Map();
+const AMADEUS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function makeAmadeusKey(lat, lon, radius) {
+  return `${lat}:${lon}:${radius}`;
+}
+
+function isFresh(entry) {
+  return entry && (Date.now() - entry.ts) < AMADEUS_CACHE_TTL_MS;
+}
+
 // auth simple por x-api-key
 app.use((req, res, next) => {
   const key = req.get('x-api-key');
@@ -32,21 +45,43 @@ function runNodeScript(relPath, args = [], env = {}) {
 
 // POST /amadeus
 app.post('/amadeus', async (req, res) => {
-  const { latitude, longitude, radius = 30, keyword = null, saveToDb = false, userUuid = null, typed = false } = req.body || {};
+  const { latitude, longitude, radius = 30, keyword = null, saveToDb = false, userUuid = null } = req.body || {};
   if (typeof latitude !== 'number' || typeof longitude !== 'number') return res.status(400).json({ ok: false, error: 'latitude/longitude required' });
 
-  // Solo actualizar cuando el usuario escriba (typed === true)
-  if (typed !== true) {
-    return res.status(200).json({ ok: true, output: '[]', error: '', code: 0 });
+  const key = makeAmadeusKey(latitude, longitude, radius);
+
+  // If user is typing (keyword present), try to serve from cache fast
+  const cached = amadeusCache.get(key);
+  if (keyword && isFresh(cached) && Array.isArray(cached.hotels)) {
+    const filtered = cached.hotels.filter(h => (h?.name || '').toLowerCase().includes(String(keyword).toLowerCase()));
+    const output = JSON.stringify(filtered);
+    return res.status(200).json({ ok: true, output, error: '', code: 0 });
   }
 
-  const args = [String(latitude), String(longitude), `--radius=${radius}`];
-  if (keyword) args.push(`--keyword=${keyword}`);
-  // Solo guardar si viene explícitamente desde el usuario escribiendo
-  if (typed === true && saveToDb && userUuid) args.push(`--user-id=${userUuid}`, '--save');
+  // Build args. If we want to populate cache, call without keyword first
+  const baseArgs = [String(latitude), String(longitude), `--radius=${radius}`];
+  if (saveToDb && userUuid) baseArgs.push(`--user-id=${userUuid}`, '--save');
 
-  const { code, stdout, stderr } = await runNodeScript('scripts/amadeus_hotels.js', args);
-  return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, output: stdout, error: stderr, code });
+  // When no fresh cache, fetch base list (no keyword) to cache
+  const { code, stdout, stderr } = await runNodeScript('scripts/amadeus_hotels.js', baseArgs);
+  if (code !== 0) {
+    return res.status(500).json({ ok: false, output: stdout, error: stderr, code });
+  }
+
+  // Parse and cache base result
+  let hotels = [];
+  try { hotels = JSON.parse(stdout); } catch {}
+  amadeusCache.set(key, { hotels, ts: Date.now() });
+
+  // If keyword provided, filter from freshly fetched base
+  if (keyword) {
+    const filtered = hotels.filter(h => (h?.name || '').toLowerCase().includes(String(keyword).toLowerCase()));
+    const output = JSON.stringify(filtered);
+    return res.status(200).json({ ok: true, output, error: '', code: 0 });
+  }
+
+  // No keyword: return full base result as-is
+  return res.status(200).json({ ok: true, output: stdout, error: '', code: 0 });
 });
 
 // POST /hotel
