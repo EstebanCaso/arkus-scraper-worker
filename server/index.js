@@ -18,7 +18,10 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-function runNodeScript(relPath, args = [], env = {}, timeoutMs = 55000) {
+// Timeout por defecto configurable (para scrapers largos)
+const DEFAULT_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 900000); // 15 min
+
+function runNodeScript(relPath, args = [], env = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     const child = spawn('node', [relPath, ...args], {
@@ -46,6 +49,51 @@ function runNodeScript(relPath, args = [], env = {}, timeoutMs = 55000) {
 
 function parseJsonSafe(str, fallback) {
   try { return JSON.parse(String(str || '')); } catch { return fallback; }
+}
+
+// Extrae el último JSON válido (Array u Object) desde stdout con logs mezclados
+function extractLastJsonPayload(mixedOutput) {
+  const text = String(mixedOutput || '');
+  // Rápido: intentar parsear completo primero
+  const direct = parseJsonSafe(text, null);
+  if (direct && (Array.isArray(direct) || typeof direct === 'object')) return direct;
+
+  // Buscar el último bloque que parezca JSON comenzando desde el final
+  const candidates = [];
+  for (let i = text.length - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === ']' || ch === '}') {
+      // Encontrar inicio correspondiente usando un contador simple
+      let open = ch === ']' ? '[' : '{';
+      let close = ch;
+      let depth = 0;
+      for (let j = i; j >= 0; j--) {
+        const cj = text[j];
+        if (cj === close) depth++;
+        else if (cj === open) depth--;
+        if (depth === 0) {
+          candidates.push(text.slice(j, i + 1));
+          break;
+        }
+      }
+    }
+    if (candidates.length >= 3) break; // no más de 3 intentos
+  }
+  for (const c of candidates) {
+    const parsed = parseJsonSafe(c, null);
+    if (parsed && (Array.isArray(parsed) || typeof parsed === 'object')) return parsed;
+  }
+  // Fallback: intentar última línea que parezca JSON
+  const lines = text.split(/\r?\n/).reverse();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+      const parsed = parseJsonSafe(trimmed, null);
+      if (parsed && (Array.isArray(parsed) || typeof parsed === 'object')) return parsed;
+    }
+  }
+  return null;
 }
 
 // --- Stop flags (per user) ---
@@ -111,8 +159,9 @@ app.post('/hotel', async (req, res) => {
     if (!userUuid || !hotelName) return res.status(400).json({ ok: false, error: 'userUuid and hotelName required' });
     const args = [userUuid, hotelName, `--days=${days}`, `--concurrency=${concurrency}`];
     if (headless) args.push('--headless');
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/hotel_propio.js', args, { USER_JWT: userJwt }, 55000);
-    const data = Array.isArray(parseJsonSafe(stdout, null)) ? parseJsonSafe(stdout, []) : [];
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/hotel_propio.js', args, { USER_JWT: userJwt }, 120000);
+    const payload = extractLastJsonPayload(stdout);
+    const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.reduce((acc, d) => acc + (Array.isArray(d?.rooms) ? d.rooms.length : 0), 0) : 0;
     if (code !== 0 && count === 0) {
       console.error('[hotel] non-zero exit or empty data', { code, stderr, durationMs });
@@ -132,8 +181,9 @@ app.post('/events', async (req, res) => {
     const { latitude, longitude, radius = 50, userUuid = null, hotelName = '' } = req.body || {};
     if (typeof latitude !== 'number' || typeof longitude !== 'number') return res.status(400).json({ ok: false, error: 'latitude/longitude required' });
     const args = [String(latitude), String(longitude), String(radius)];
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, {}, 55000);
-    const data = Array.isArray(parseJsonSafe(stdout, null)) ? parseJsonSafe(stdout, []) : [];
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, {}, 90000);
+    const payload = extractLastJsonPayload(stdout);
+    const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.length : 0;
     if (count === 0) {
       console.log('[events] 0 events', { latitude, longitude, radius });
@@ -157,8 +207,9 @@ app.post('/ticketmaster', async (req, res) => {
       console.log('[ticketmaster] No API key present');
     }
     const args = [String(latitude), String(longitude), String(radius)];
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrapeo_geo.js', args, {}, 55000);
-    const data = Array.isArray(parseJsonSafe(stdout, null)) ? parseJsonSafe(stdout, []) : [];
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrapeo_geo.js', args, {}, 90000);
+    const payload = extractLastJsonPayload(stdout);
+    const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.length : 0;
     return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : stderr, durationMs, startedAt, note: hasKey ? undefined : 'No API key' });
   } catch (e) {
