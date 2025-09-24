@@ -6,7 +6,13 @@ import path from 'path';
 
 const app = express();
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  // Asegurar tiempo suficiente para scrapers largos
+  try { req.setTimeout(20 * 60 * 1000); } catch {}
+  try { res.setTimeout(20 * 60 * 1000); } catch {}
+  next();
+});
 
 // auth simple por x-api-key
 app.use((req, res, next) => {
@@ -19,7 +25,7 @@ app.use((req, res, next) => {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Timeout por defecto configurable (para scrapers largos)
-const DEFAULT_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 900000); // 15 min
+const DEFAULT_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 1200000); // 20 min
 
 function runNodeScript(relPath, args = [], env = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return new Promise((resolve) => {
@@ -159,13 +165,14 @@ app.post('/hotel', async (req, res) => {
     if (!userUuid || !hotelName) return res.status(400).json({ ok: false, error: 'userUuid and hotelName required' });
     const args = [userUuid, hotelName, `--days=${days}`, `--concurrency=${concurrency}`];
     if (headless) args.push('--headless');
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/hotel_propio.js', args, { USER_JWT: userJwt }, 120000);
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/hotel_propio.js', args, { USER_JWT: userJwt }, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.reduce((acc, d) => acc + (Array.isArray(d?.rooms) ? d.rooms.length : 0), 0) : 0;
     if (code !== 0 && count === 0) {
       console.error('[hotel] non-zero exit or empty data', { code, stderr, durationMs });
     }
+    console.log(`[hotel] hotelName="${hotelName}" rooms=${count} durationMs=${durationMs}`);
     return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : stderr, durationMs, startedAt });
   } catch (e) {
     const durationMs = Date.now() - startedAt;
@@ -181,13 +188,14 @@ app.post('/events', async (req, res) => {
     const { latitude, longitude, radius = 50, userUuid = null, hotelName = '' } = req.body || {};
     if (typeof latitude !== 'number' || typeof longitude !== 'number') return res.status(400).json({ ok: false, error: 'latitude/longitude required' });
     const args = [String(latitude), String(longitude), String(radius)];
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, {}, 90000);
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, {}, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.length : 0;
     if (count === 0) {
       console.log('[events] 0 events', { latitude, longitude, radius });
     }
+    console.log(`[events] items=${count} durationMs=${durationMs}`);
     return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : stderr, durationMs, startedAt });
   } catch (e) {
     const durationMs = Date.now() - startedAt;
@@ -207,10 +215,11 @@ app.post('/ticketmaster', async (req, res) => {
       console.log('[ticketmaster] No API key present');
     }
     const args = [String(latitude), String(longitude), String(radius)];
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrapeo_geo.js', args, {}, 90000);
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrapeo_geo.js', args, {}, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.length : 0;
+    console.log(`[ticketmaster] items=${count} durationMs=${durationMs} hasKey=${hasKey}`);
     return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : stderr, durationMs, startedAt, note: hasKey ? undefined : 'No API key' });
   } catch (e) {
     const durationMs = Date.now() - startedAt;
