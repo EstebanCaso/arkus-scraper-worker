@@ -9,15 +9,10 @@ const PAGE_LOAD_TIMEOUT = 120_000
 
 function resolveSongkickUrl(lat, lon, radiusKm) {
 	if (lat && lon) {
-		if (lat > 19.0 && lat < 33.0 && lon > -118.0 && lon < -86.0) {
-			if (lat > 32.0) return 'https://www.songkick.com/metro-areas/31097-mexico-tijuana/calendar'
-			if (lat > 25.0) return 'https://www.songkick.com/metro-areas/31098-mexico-monterrey/calendar'
-			if (lat > 20.0) return 'https://www.songkick.com/metro-areas/31099-mexico-guadalajara/calendar'
-			return 'https://www.songkick.com/metro-areas/31100-mexico-mexico-city/calendar'
-		}
+		// Prefer the lat/lon search URL to avoid metro-area page variations
 		return `https://www.songkick.com/search?query=&location=${lat},${lon}&radius=${radiusKm}`
 	}
-	return 'https://www.songkick.com/metro-areas/31097-mexico-tijuana/calendar'
+	return 'https://www.songkick.com/search?query=&location=32.5149,-117.0382&radius=50'
 }
 
 export async function scrapeSongkick(lat, lon, radiusKm) {

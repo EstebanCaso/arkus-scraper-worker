@@ -86,7 +86,13 @@ async function scrapeBookingPrices(hotelName, { locale = 'en-us', currency = 'MX
       '--disable-dev-shm-usage'
     ]
   });
-  const page = await browser.newPage({ userAgent });
+  const context = await browser.newContext({
+    userAgent,
+    viewport: { width: 1366, height: 768 },
+    locale: 'es-ES',
+    extraHTTPHeaders: { 'accept-language': 'es-ES,es;q=0.9,en;q=0.8' }
+  })
+  const page = await context.newPage();
 
   const today = new Date();
   const tomorrow = new Date(today);
@@ -510,7 +516,13 @@ async function scrapeMultipleDates(hotelName, userId, { days = 90, concurrency =
       '--disable-dev-shm-usage'
     ]
   })
-  const page = await browser.newPage({ userAgent })
+  const context = await browser.newContext({
+    userAgent,
+    viewport: { width: 1366, height: 768 },
+    locale: 'es-ES',
+    extraHTTPHeaders: { 'accept-language': 'es-ES,es;q=0.9,en;q=0.8' }
+  })
+  const page = await context.newPage()
 
   // 1) Abrir búsqueda y entrar al primer resultado como en .py
   const today = new Date()
