@@ -30,8 +30,17 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 1200000); //
 function runNodeScript(relPath, args = [], env = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    const child = spawn('node', [relPath, ...args], {
+    const absPath = path.isAbsolute(relPath) ? relPath : path.join(process.cwd(), relPath);
+    const exists = (() => { try { return fs.existsSync(absPath); } catch { return false } })();
+    if (!exists) {
+      const durationMs = Date.now() - startedAt;
+      console.error('[runNodeScript] Script not found:', { absPath });
+      return resolve({ code: -2, stdout: '', stderr: `Script not found: ${absPath}`, durationMs });
+    }
+    console.log(`[runNodeScript] start file=${absPath} args=${JSON.stringify(args)} timeoutMs=${timeoutMs}`);
+    const child = spawn('node', [absPath, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: process.cwd(),
       env: { ...process.env, ...env },
     });
     let stdout = '', stderr = '';
@@ -40,6 +49,7 @@ function runNodeScript(relPath, args = [], env = {}, timeoutMs = DEFAULT_TIMEOUT
       if (finished) return; finished = true;
       clearTimeout(timer);
       const durationMs = Date.now() - startedAt;
+      console.log(`[runNodeScript] end file=${absPath} code=${result?.code} durationMs=${durationMs}`);
       resolve({ ...result, durationMs });
     };
     const timer = setTimeout(() => {
@@ -165,6 +175,7 @@ app.post('/hotel', async (req, res) => {
     if (!userUuid || !hotelName) return res.status(400).json({ ok: false, error: 'userUuid and hotelName required' });
     const args = [userUuid, hotelName, `--days=${days}`, `--concurrency=${concurrency}`];
     if (headless) args.push('--headless');
+    console.log('[hotel] invoking script with args', args);
     const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/hotel_propio.js', args, { USER_JWT: userJwt }, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
@@ -188,7 +199,8 @@ app.post('/events', async (req, res) => {
     const { latitude, longitude, radius = 50, userUuid = null, hotelName = '' } = req.body || {};
     if (typeof latitude !== 'number' || typeof longitude !== 'number') return res.status(400).json({ ok: false, error: 'latitude/longitude required' });
     const args = [String(latitude), String(longitude), String(radius)];
-    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, {}, DEFAULT_TIMEOUT_MS);
+    console.log('[events] invoking script with args', args);
+    const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrape_songkick.js', args, { DEBUG: 'true' }, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
     const count = Array.isArray(data) ? data.length : 0;
@@ -215,6 +227,7 @@ app.post('/ticketmaster', async (req, res) => {
       console.log('[ticketmaster] No API key present');
     }
     const args = [String(latitude), String(longitude), String(radius)];
+    console.log('[ticketmaster] invoking script with args', args);
     const { code, stdout, stderr, durationMs } = await runNodeScript('scripts/scrapeo_geo.js', args, {}, DEFAULT_TIMEOUT_MS);
     const payload = extractLastJsonPayload(stdout);
     const data = Array.isArray(payload) ? payload : [];
