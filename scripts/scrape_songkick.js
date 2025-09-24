@@ -120,30 +120,33 @@ export async function scrapeSongkick(lat, lon, radiusKm) {
 		await page.waitForTimeout(2000)
 		// Try to ensure content populated
 		try { await page.waitForLoadState('networkidle', { timeout: 20_000 }) } catch {}
-		// Progressive scroll to trigger lazy loading
-		const maxScrolls = 12
+		// Progressive scroll to trigger lazy loading (increase passes)
+		const maxScrolls = 20
 		for (let i = 0; i < maxScrolls; i++) {
 			await page.evaluate(() => { window.scrollBy(0, window.innerHeight) })
 			await page.waitForTimeout(1200)
 		}
 		// Ensure event anchors present if possible
-		try { await page.waitForSelector('a.event-link, li.event-listings-element', { timeout: 15_000 }) } catch {}
+		try { await page.waitForSelector('a.event-link, li.event-listings-element, .event-listings li, [data-qa="event-item"], a[href^="/concerts/"]', { timeout: 20_000 }) } catch {}
 
 		// Try multiple selectors
 		const selectors = [
 			'li.event-listings-element',
+			'article.event-listings-element',
 			'.event-listings li',
 			'.event-listings .event',
 			"[data-testid='event-item']",
+			"[data-qa='event-item']",
 			'.event-item',
 			'ul.event-listings > li',
-			'li.component.events-listings-element'
+			'li.component.events-listings-element',
+			'a.event-link[href^="/concerts/"]'
 		]
 		let hasAny = false
 		for (const sel of selectors) {
 			try {
 				if (DEBUG) console.error('[songkick] Waiting for selector:', sel)
-				await page.waitForSelector(sel, { timeout: 10_000 })
+				await page.waitForSelector(sel, { timeout: 15_000 })
 				hasAny = true
 				break
 			} catch (e) {
@@ -151,12 +154,7 @@ export async function scrapeSongkick(lat, lon, radiusKm) {
 			}
 		}
 
-		const html = await page.content()
-		if (!html || html.length < 1000) {
-			if (DEBUG) console.error('[songkick] Page content too short, returning empty set')
-			await browser.close()
-			return []
-		}
+		// Do not early-return solely based on HTML length; continue to evaluation
 
 		// Extract with page.evaluate to avoid server libs
 		if (DEBUG) console.error('[songkick] Extracting events…')
@@ -210,11 +208,11 @@ export async function scrapeSongkick(lat, lon, radiusKm) {
 			} catch {}
 
 			// Primary path: iterate explicit event anchors
-			const anchors = Array.from(document.querySelectorAll('a.event-link[href^="/concerts/"]'))
+			const anchors = Array.from(document.querySelectorAll('a.event-link[href^="/concerts/"], a[href^="/concerts/"]'))
 			const out = []
 			for (const a of anchors) {
 				try {
-					const root = a.closest('li.event-listings-element, .event-listings li, .event, .event-item, article') || a.parentElement || a
+					const root = a.closest('li.event-listings-element, .event-listings li, .event, .event-item, article, li, div') || a.parentElement || a
 
 					// Date from datetime attribute near the anchor
 					const time = root.querySelector('time[datetime], [itemprop="startDate"][content], time')
@@ -262,6 +260,40 @@ export async function scrapeSongkick(lat, lon, radiusKm) {
 			}
 			return out
 		}, { lat, lon, radiusKm, BASE_URL })
+
+		// Fallback: if no events extracted yet, try the search URL variant explicitly
+		if ((!events || events.length === 0) && lat != null && lon != null) {
+			try {
+				const searchUrl = `https://www.songkick.com/search?query=&location=${lat},${lon}&radius=${radiusKm}`
+				if (DEBUG) console.error('[songkick] Fallback to search URL', searchUrl)
+				await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_LOAD_TIMEOUT })
+				try { await page.waitForLoadState('networkidle', { timeout: 10_000 }) } catch {}
+				for (let i = 0; i < 10; i++) { await page.evaluate(() => { window.scrollBy(0, window.innerHeight) }); await page.waitForTimeout(800) }
+				await page.waitForSelector('a.event-link, a[href^="/concerts/"]', { timeout: 10_000 }).catch(()=>{})
+				events = await page.evaluate(({ lat, lon, radiusKm, BASE_URL }) => {
+					function text(el) { return (el?.textContent || '').trim() }
+					function toKm(a, b) { const R = 6371; const dLat=(b.lat-a.lat)*Math.PI/180; const dLon=(b.lon-a.lon)*Math.PI/180; const va=Math.sin(dLat/2)**2 + Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2; const c=2*Math.atan2(Math.sqrt(va), Math.sqrt(1-va)); return R*c }
+					const out = []
+					const anchors = Array.from(document.querySelectorAll('a.event-link[href^="/concerts/"], a[href^="/concerts/"]'))
+					for (const a of anchors) {
+						try {
+							const root = a.closest('li, article, .event, .event-item, .event-listings-element') || a.parentElement || a
+							const time = root.querySelector('time[datetime], [itemprop="startDate"][content], time')
+							let fecha = time?.getAttribute('datetime') || time?.getAttribute('content') || ''
+							if (fecha.length > 10) fecha = fecha.slice(0,10)
+							const strong = a.querySelector('span > strong') || root.querySelector('strong, h2, h3, [itemprop="name"]')
+							const nombre = text(strong)
+							const venueEl = root.querySelector('a.venue-link, a[href*="/venues/"]') || root.querySelector('.venue, .location, [itemprop="location"], [data-qa="event-venue"]')
+							const venue = text(venueEl)
+							const href = a.getAttribute('href')
+							const enlace = href ? (href.startsWith('http') ? href : `${BASE_URL}${href}`) : ''
+							out.push({ nombre, fecha, lugar: venue, enlace })
+						} catch {}
+					}
+					return out
+				}, { lat, lon, radiusKm, BASE_URL })
+			} catch {}
+		}
 
 		// Enrich missing fields by visiting event pages (limit concurrency)
 		const needEnrichment = Array.isArray(events) ? events

@@ -73,10 +73,19 @@ function generateDates(days = 90) {
 }
 
 // --- Scraper principal ---
-async function scrapeBookingPrices(hotelName, { locale = 'en-us', currency = 'MXN', headless = false } = {}) {
+async function scrapeBookingPrices(hotelName, { locale = 'en-us', currency = 'MXN', headless = true } = {}) {
   const userAgent = getRandomUA();
   
-  const browser = await chromium.launch({ headless });
+  const browser = await chromium.launch({
+    headless,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+      '--disable-dev-shm-usage'
+    ]
+  });
   const page = await browser.newPage({ userAgent });
 
   const today = new Date();
@@ -487,11 +496,20 @@ async function scrapeBookingPrices(hotelName, { locale = 'en-us', currency = 'MX
 }
 
 // --- Scraper para múltiples fechas con concurrencia ---
-async function scrapeMultipleDates(hotelName, userId, { days = 90, concurrency = 5, headless = false } = {}) {
+async function scrapeMultipleDates(hotelName, userId, { days = 90, concurrency = 5, headless = true } = {}) {
   console.log(`📅 Iniciando scraping para ${days} días con concurrencia de ${concurrency}`)
 
   const userAgent = getRandomUA()
-  const browser = await chromium.launch({ headless })
+  const browser = await chromium.launch({
+    headless,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+      '--disable-dev-shm-usage'
+    ]
+  })
   const page = await browser.newPage({ userAgent })
 
   // 1) Abrir búsqueda y entrar al primer resultado como en .py
