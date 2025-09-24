@@ -44,16 +44,19 @@ export async function scrapeSongkick(lat, lon, radiusKm) {
 			}
 		})
 		const page = await context.newPage()
-		// Block third-party noise (ads/trackers) to stabilize DOM
-		await context.route('**/*', (route) => {
-			try {
-				const u = new URL(route.request().url())
-				const host = u.hostname
-				const allow = host.endsWith('songkick.com')
-				if (allow) return route.continue()
-				return route.abort()
-			} catch { return route.continue() }
-		})
+		// Optional: block third-party only when explicitly enabled
+		const BLOCK_THIRD_PARTY = String(process.env.SK_BLOCK_THIRD_PARTY || '').toLowerCase() === 'true'
+		if (BLOCK_THIRD_PARTY) {
+			await context.route('**/*', (route) => {
+				try {
+					const u = new URL(route.request().url())
+					const host = u.hostname
+					const allow = host.endsWith('songkick.com')
+					if (allow) return route.continue()
+					return route.abort()
+				} catch { return route.continue() }
+			})
+		}
 		if (DEBUG) {
 			page.on('console', (msg) => console.error('[songkick][page]', msg.type(), msg.text()))
 			page.on('pageerror', (err) => console.error('[songkick][pageerror]', err?.message || err))

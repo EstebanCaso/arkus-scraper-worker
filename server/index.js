@@ -3,6 +3,7 @@ import cors from 'cors';
 import { spawn } from 'node:child_process';
 import fs from 'fs';
 import path from 'path';
+import 'dotenv/config';
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -208,7 +209,8 @@ app.post('/events', async (req, res) => {
       console.log('[events] 0 events', { latitude, longitude, radius });
     }
     console.log(`[events] items=${count} durationMs=${durationMs}`);
-    return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : stderr, durationMs, startedAt });
+    const briefErr = stderr ? String(stderr).slice(0, 400) : undefined;
+    return res.status(code === 0 ? 200 : 500).json({ ok: code === 0, data, count, code, error: code === 0 ? undefined : briefErr, durationMs, startedAt });
   } catch (e) {
     const durationMs = Date.now() - startedAt;
     console.error('[events] error', e?.message || e);
